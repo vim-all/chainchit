@@ -12,6 +12,7 @@ import { Coins, Users, Shield, Zap, RefreshCw, AlertCircle, ArrowRight } from 'l
 
 export default function BiddingRoomPage() {
   const [currentUser, setCurrentUser] = useState<any>(null);
+  const [allActiveCycles, setAllActiveCycles] = useState<any[]>([]);
   const [cycleData, setCycleData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [activeCycleId, setActiveCycleId] = useState<string | null>(null);
@@ -19,10 +20,12 @@ export default function BiddingRoomPage() {
 
   const fetchCycle = useCallback(async (id?: string | null) => {
     try {
+      const listRes = await fetch('/api/cycles');
+      const listData = await listRes.json();
+      setAllActiveCycles(listData.activeCycles || []);
+
       let targetId = id || activeCycleId;
       if (!targetId) {
-        const listRes = await fetch('/api/cycles');
-        const listData = await listRes.json();
         targetId = listData.activeCycleId;
         setActiveCycleId(targetId);
       }
@@ -131,7 +134,7 @@ export default function BiddingRoomPage() {
     );
   }
 
-  const { cycle, group, winner, enrolledMembers = [], bids = [] } = cycleData;
+  const { cycle, group, winner, enrolledMembers = [], bids = [], lowestValidBid } = cycleData;
 
   const lowestOverallBid = bids[0];
   const isLowestBidBlockedByFraud =
@@ -152,6 +155,56 @@ export default function BiddingRoomPage() {
       )}
 
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-6">
+        {/* Multi-Cycle Room Navigation Bar */}
+        {allActiveCycles.length > 1 && (
+          <div className="p-4 rounded-2xl bg-neutral-900/80 border border-indigo-500/30 backdrop-blur-md">
+            <div className="flex items-center justify-between mb-2.5">
+              <div className="flex items-center space-x-2">
+                <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-ping" />
+                <h3 className="text-xs font-bold text-white uppercase tracking-wider">
+                  Multiple Active Bidding Sessions ({allActiveCycles.length} Live Rooms)
+                </h3>
+              </div>
+              <span className="text-[11px] text-neutral-400">Select room to participate</span>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2.5">
+              {allActiveCycles.map((ac) => {
+                const isSelected = ac.id === activeCycleId;
+                return (
+                  <button
+                    key={ac.id}
+                    onClick={() => {
+                      setActiveCycleId(ac.id);
+                      fetchCycle(ac.id);
+                    }}
+                    className={`p-3 rounded-xl border text-left transition-all ${
+                      isSelected
+                        ? 'bg-indigo-600/20 border-indigo-500 text-white shadow-lg shadow-indigo-500/10'
+                        : 'bg-neutral-950/60 border-neutral-800 hover:border-neutral-700 text-neutral-300'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-bold text-white">{ac.groupName}</span>
+                      <span className="text-[10px] font-mono font-semibold px-1.5 py-0.2 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                        Cycle #{ac.cycleNumber}
+                      </span>
+                    </div>
+                    <div className="text-[11px] text-neutral-400 mt-1 flex items-center justify-between">
+                      <span>Pool: ₹{ac.chitValue.toLocaleString('en-IN')}</span>
+                      {isSelected ? (
+                        <span className="text-indigo-400 font-bold text-[10px] uppercase">Viewing Now</span>
+                      ) : (
+                        <span className="text-neutral-500 hover:text-neutral-300 text-[10px]">Switch Room →</span>
+                      )}
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
         {/* Chit Group & Active Cycle Header */}
         <div className="rounded-3xl bg-gradient-to-r from-neutral-900 via-neutral-900/80 to-indigo-950/40 border border-neutral-800 p-6 shadow-xl backdrop-blur-md">
           <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
@@ -249,6 +302,7 @@ export default function BiddingRoomPage() {
               chitValue={group.chitValue}
               memberCount={group.numberOfMembers}
               status={cycle.status}
+              lowestBid={lowestValidBid}
               onBidSubmitted={() => fetchCycle(activeCycleId)}
             />
 

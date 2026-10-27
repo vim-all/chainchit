@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useEffect, useState } from 'react';
+import Link from 'next/link';
 import { Navbar } from '@/components/navbar';
 import {
   ShieldCheck,
@@ -10,10 +11,14 @@ import {
   Users,
   PlusCircle,
   Play,
+  Square,
   Clock,
+  Timer,
   Coins,
   RefreshCw,
   Lock,
+  ArrowRight,
+  ExternalLink,
 } from 'lucide-react';
 
 export default function ForemanDashboard() {
@@ -24,6 +29,8 @@ export default function ForemanDashboard() {
   const [members, setMembers] = useState<any[]>([]);
   const [groups, setGroups] = useState<any[]>([]);
   const [cycleData, setCycleData] = useState<any>(null);
+  const [allCycles, setAllCycles] = useState<any[]>([]);
+  const [activeCycles, setActiveCycles] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [msg, setMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
@@ -68,11 +75,15 @@ export default function ForemanDashboard() {
       const groupsData = await groupsRes.json();
       setGroups(groupsData.groups || []);
 
-      // 4. Load Active Cycle (if any)
+      // 4. Load All and Active Cycles
       const cyclesRes = await fetch('/api/cycles');
       const cyclesData = await cyclesRes.json();
-      if (cyclesData.activeCycleId) {
-        const cycleRes = await fetch(`/api/cycles/${cyclesData.activeCycleId}`);
+      setAllCycles(cyclesData.cycles || []);
+      setActiveCycles(cyclesData.activeCycles || []);
+
+      const targetCycleId = cyclesData.activeCycleId || cyclesData.cycles?.[0]?.id;
+      if (targetCycleId) {
+        const cycleRes = await fetch(`/api/cycles/${targetCycleId}`);
         const cycleJson = await cycleRes.json();
         setCycleData(cycleJson);
       }
@@ -80,6 +91,52 @@ export default function ForemanDashboard() {
       console.error('Error loading foreman dashboard:', err);
     } finally {
       setLoading(false);
+    }
+  }
+
+  // Handle Extend Timer (FR18)
+  async function handleExtendTimer(cycleId: string, extraSeconds: number) {
+    try {
+      const res = await fetch(`/api/foreman/cycles/${cycleId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'extend_timer', extraSeconds }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to extend timer');
+
+      setMsg({
+        type: 'success',
+        text: `Extended Cycle #${data.cycle.cycleNumber} bidding window by +${extraSeconds}s.`,
+      });
+      await loadAllData();
+    } catch (err: any) {
+      setMsg({ type: 'error', text: err.message });
+    }
+  }
+
+  // Handle Force Stop Cycle (FR18)
+  async function handleStopCycle(cycleId: string) {
+    if (!confirm('Are you sure you want to stop this bidding cycle now? This will finalize the auction immediately.')) {
+      return;
+    }
+    try {
+      const res = await fetch(`/api/foreman/cycles/${cycleId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'stop_cycle' }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to stop cycle');
+
+      const winnerText = data.winner?.name ? `Winning Member: ${data.winner.name}` : 'Disputed (no valid bids placed)';
+      setMsg({
+        type: 'success',
+        text: `Cycle #${data.cycle.cycleNumber} stopped by Foreman. ${winnerText}`,
+      });
+      await loadAllData();
+    } catch (err: any) {
+      setMsg({ type: 'error', text: err.message });
     }
   }
 
@@ -271,7 +328,7 @@ export default function ForemanDashboard() {
                 : 'bg-neutral-900 text-neutral-400 hover:text-white border border-neutral-800'
             }`}
           >
-            Launch Bidding Cycle
+            Launch & Supervise Cycles {activeCycles.length > 0 ? `(${activeCycles.length} Live)` : ''}
           </button>
 
           <button
@@ -456,56 +513,221 @@ export default function ForemanDashboard() {
           </div>
         )}
 
-        {/* TAB 3: Launch Cycle */}
+        {/* TAB 3: Launch & Supervise Cycles */}
         {activeTab === 'launch_cycle' && (
-          <div className="rounded-2xl bg-neutral-900/60 border border-neutral-800/80 p-6 space-y-4">
-            <div>
-              <h2 className="text-sm font-bold text-white uppercase tracking-wider">
-                Launch Live Bidding Cycle (FR17)
-              </h2>
-              <p className="text-xs text-neutral-400 mt-0.5">
-                Opens the countdown bidding window for members to place reverse auction bids.
-              </p>
+          <div className="space-y-6">
+            {/* 1. Live Active Bidding Sessions (FR18) */}
+            <div className="rounded-2xl bg-neutral-900/60 border border-neutral-800/80 p-6 space-y-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <div className="flex items-center space-x-2">
+                    <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-ping" />
+                    <h2 className="text-sm font-bold text-white uppercase tracking-wider">
+                      Live Active Bidding Sessions ({activeCycles.length} Live)
+                    </h2>
+                  </div>
+                  <p className="text-xs text-neutral-400 mt-0.5">
+                    Supervise ongoing reverse auctions in real-time. Extend timers or stop cycles manually.
+                  </p>
+                </div>
+              </div>
+
+              {activeCycles.length === 0 ? (
+                <div className="p-8 text-center rounded-xl bg-neutral-950/40 border border-neutral-800 text-xs text-neutral-400">
+                  No cycles currently active. Launch a new cycle below to open a bidding window.
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {activeCycles.map((ac) => (
+                    <div
+                      key={ac.id}
+                      className="p-5 rounded-2xl bg-neutral-950/90 border border-emerald-500/40 shadow-lg shadow-emerald-500/5 space-y-4"
+                    >
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-neutral-800/80 pb-3">
+                        <div>
+                          <div className="flex items-center space-x-2">
+                            <span className="text-sm font-bold text-white">{ac.groupName}</span>
+                            <span className="text-xs font-mono font-semibold px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/30">
+                              Cycle #{ac.cycleNumber}
+                            </span>
+                            <span className="text-[10px] uppercase font-bold px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 flex items-center gap-1">
+                              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                              Bidding Open
+                            </span>
+                          </div>
+                          <div className="text-xs text-neutral-400 font-mono mt-1 space-x-3">
+                            <span>Pool: ₹{ac.chitValue.toLocaleString('en-IN')}</span>
+                            <span>•</span>
+                            <span>Ends: {ac.biddingEndTime ? new Date(ac.biddingEndTime).toLocaleTimeString() : 'N/A'}</span>
+                            <span>•</span>
+                            <span>Duration: {ac.biddingDurationSeconds}s</span>
+                          </div>
+                        </div>
+
+                        <Link
+                          href={`/cycle/${ac.id}`}
+                          className="self-start sm:self-auto px-3.5 py-1.5 rounded-xl bg-indigo-600/30 hover:bg-indigo-600/50 text-indigo-200 border border-indigo-500/40 text-xs font-semibold transition-all flex items-center gap-1.5 shadow-md"
+                        >
+                          <span>Enter Live Room</span>
+                          <ExternalLink className="w-3.5 h-3.5" />
+                        </Link>
+                      </div>
+
+                      {/* Foreman Controls for this active cycle */}
+                      <div className="flex flex-wrap items-center justify-between gap-3 pt-1">
+                        <div className="flex items-center space-x-2">
+                          <span className="text-xs font-semibold text-neutral-400 flex items-center gap-1">
+                            <Timer className="w-3.5 h-3.5 text-amber-400" /> Extend Timer:
+                          </span>
+                          <button
+                            onClick={() => handleExtendTimer(ac.id, 60)}
+                            className="px-2.5 py-1 rounded-lg bg-neutral-900 hover:bg-neutral-800 text-amber-300 border border-amber-500/30 text-xs font-mono font-semibold transition-all"
+                            title="Add 60 seconds to countdown"
+                          >
+                            +60s
+                          </button>
+                          <button
+                            onClick={() => handleExtendTimer(ac.id, 120)}
+                            className="px-2.5 py-1 rounded-lg bg-neutral-900 hover:bg-neutral-800 text-amber-300 border border-amber-500/30 text-xs font-mono font-semibold transition-all"
+                            title="Add 120 seconds to countdown"
+                          >
+                            +120s
+                          </button>
+                        </div>
+
+                        <div>
+                          <button
+                            onClick={() => handleStopCycle(ac.id)}
+                            className="px-3.5 py-1.5 rounded-xl bg-rose-600/20 hover:bg-rose-600/40 text-rose-300 border border-rose-500/40 text-xs font-semibold transition-all flex items-center gap-1.5 shadow-sm"
+                          >
+                            <Square className="w-3.5 h-3.5" />
+                            <span>Stop Bidding Window</span>
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
 
-            {groups.length === 0 ? (
-              <div className="p-8 text-center rounded-xl bg-neutral-950/40 border border-neutral-800 text-xs text-neutral-400">
-                No chit groups created yet. Create a group in the "Create Chit Group" tab first.
+            {/* 2. Launch New Bidding Cycle (FR17) */}
+            <div className="rounded-2xl bg-neutral-900/60 border border-neutral-800/80 p-6 space-y-4">
+              <div>
+                <h2 className="text-sm font-bold text-white uppercase tracking-wider">
+                  Launch New Bidding Cycle (FR17)
+                </h2>
+                <p className="text-xs text-neutral-400 mt-0.5">
+                  Opens a new countdown reverse-auction window for enrolled chit group members.
+                </p>
               </div>
-            ) : (
-              <div className="space-y-4">
-                <div className="flex items-center space-x-3 max-w-xs">
-                  <label className="text-xs font-semibold text-neutral-300">Bidding Window Timer (Seconds):</label>
-                  <input
-                    type="number"
-                    min="30"
-                    step="30"
-                    value={cycleDurationSeconds}
-                    onChange={(e) => setCycleDurationSeconds(e.target.value)}
-                    className="w-24 bg-neutral-950 border border-neutral-800 rounded-xl py-1.5 px-3 text-xs text-white font-mono focus:outline-none focus:border-amber-500"
-                  />
+
+              {groups.length === 0 ? (
+                <div className="p-8 text-center rounded-xl bg-neutral-950/40 border border-neutral-800 text-xs text-neutral-400">
+                  No chit groups created yet. Create a group in the "Create Chit Group" tab first.
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  <div className="flex items-center space-x-3 max-w-xs">
+                    <label className="text-xs font-semibold text-neutral-300">Countdown Timer (Seconds):</label>
+                    <input
+                      type="number"
+                      min="30"
+                      step="30"
+                      value={cycleDurationSeconds}
+                      onChange={(e) => setCycleDurationSeconds(e.target.value)}
+                      className="w-24 bg-neutral-950 border border-neutral-800 rounded-xl py-1.5 px-3 text-xs text-white font-mono focus:outline-none focus:border-amber-500"
+                    />
+                  </div>
+
+                  <div className="divide-y divide-neutral-800 rounded-xl bg-neutral-950/60 border border-neutral-800 overflow-hidden">
+                    {groups.map((group) => {
+                      const isGroupActive = activeCycles.some((ac) => ac.groupId === group.id);
+                      return (
+                        <div key={group.id} className="p-4 flex items-center justify-between">
+                          <div>
+                            <div className="flex items-center space-x-2">
+                              <span className="text-sm font-bold text-white">{group.name}</span>
+                              {isGroupActive && (
+                                <span className="text-[10px] font-bold px-1.5 py-0.2 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                                  Live Cycle Active
+                                </span>
+                              )}
+                            </div>
+                            <div className="text-xs text-neutral-400 font-mono mt-0.5 space-x-3">
+                              <span>Pool: ₹{group.chitValue.toLocaleString('en-IN')}</span>
+                              <span>•</span>
+                              <span>Capacity: {group.numberOfMembers} Members</span>
+                            </div>
+                          </div>
+
+                          <button
+                            onClick={() => handleLaunchCycle(group.id)}
+                            className="px-4 py-2 rounded-xl bg-gradient-to-r from-amber-500 to-emerald-500 hover:from-amber-400 hover:to-emerald-400 text-neutral-950 font-bold text-xs transition-all flex items-center gap-1.5 shadow-lg shadow-amber-500/20"
+                          >
+                            <Play className="w-3.5 h-3.5" /> Open Bidding Window
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* 3. Concluded Cycles History */}
+            {allCycles.filter((c) => c.status !== 'BIDDING_OPEN').length > 0 && (
+              <div className="rounded-2xl bg-neutral-900/60 border border-neutral-800/80 p-6 space-y-4">
+                <div>
+                  <h2 className="text-sm font-bold text-white uppercase tracking-wider">
+                    Past & Concluded Cycles History
+                  </h2>
+                  <p className="text-xs text-neutral-400 mt-0.5">
+                    Records of finalized auctions, winning payouts, and escrow dispositions.
+                  </p>
                 </div>
 
                 <div className="divide-y divide-neutral-800 rounded-xl bg-neutral-950/60 border border-neutral-800 overflow-hidden">
-                  {groups.map((group) => (
-                    <div key={group.id} className="p-4 flex items-center justify-between">
-                      <div>
-                        <div className="text-sm font-bold text-white">{group.name}</div>
-                        <div className="text-xs text-neutral-400 font-mono mt-0.5 space-x-3">
-                          <span>Pool: ₹{group.chitValue.toLocaleString('en-IN')}</span>
-                          <span>•</span>
-                          <span>Capacity: {group.numberOfMembers} Members</span>
+                  {allCycles
+                    .filter((c) => c.status !== 'BIDDING_OPEN')
+                    .map((c) => (
+                      <div key={c.id} className="p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                        <div>
+                          <div className="flex items-center space-x-2">
+                            <span className="text-sm font-bold text-white">{c.groupName}</span>
+                            <span className="text-xs font-mono font-semibold px-1.5 py-0.2 rounded bg-neutral-800 text-neutral-300">
+                              Cycle #{c.cycleNumber}
+                            </span>
+                            <span
+                              className={`text-[10px] uppercase font-bold px-2 py-0.5 rounded border ${
+                                c.status === 'SETTLED'
+                                  ? 'bg-blue-500/10 text-blue-400 border-blue-500/30'
+                                  : c.status === 'BIDDING_CLOSED'
+                                  ? 'bg-amber-500/10 text-amber-400 border-amber-500/30'
+                                  : 'bg-rose-500/10 text-rose-400 border-rose-500/30'
+                              }`}
+                            >
+                              {c.status.replace('_', ' ')}
+                            </span>
+                          </div>
+                          <div className="text-xs text-neutral-400 font-mono mt-1 space-x-3">
+                            <span>Winner: <strong className="text-neutral-200">{c.winnerName || 'Disputed'}</strong></span>
+                            <span>•</span>
+                            <span>Payout: <strong className="text-white">₹{c.payoutAmount ? c.payoutAmount.toLocaleString('en-IN') : '0'}</strong></span>
+                            <span>•</span>
+                            <span>Escrow: {c.escrowStatus}</span>
+                          </div>
                         </div>
-                      </div>
 
-                      <button
-                        onClick={() => handleLaunchCycle(group.id)}
-                        className="px-4 py-2 rounded-xl bg-gradient-to-r from-amber-500 to-emerald-500 hover:from-amber-400 hover:to-emerald-400 text-neutral-950 font-bold text-xs transition-all flex items-center gap-1.5 shadow-lg shadow-amber-500/20"
-                      >
-                        <Play className="w-3.5 h-3.5" /> Open Bidding Window
-                      </button>
-                    </div>
-                  ))}
+                        <Link
+                          href={`/cycle/${c.id}`}
+                          className="self-start sm:self-auto px-3 py-1.5 rounded-xl bg-neutral-800 hover:bg-neutral-700 text-neutral-300 text-xs font-semibold transition-all flex items-center gap-1.5"
+                        >
+                          <span>View Room</span>
+                          <ArrowRight className="w-3.5 h-3.5" />
+                        </Link>
+                      </div>
+                    ))}
                 </div>
               </div>
             )}

@@ -15,6 +15,7 @@ interface BidFormProps {
   chitValue: number;
   memberCount: number;
   status: string;
+  lowestBid?: { memberId: string; bidAmount: number } | null;
   onBidSubmitted?: (data: any) => void;
 }
 
@@ -24,6 +25,7 @@ export function BidForm({
   chitValue = 100000,
   memberCount = 5,
   status,
+  lowestBid,
   onBidSubmitted,
 }: BidFormProps) {
   const [bidAmount, setBidAmount] = useState<string>('85000');
@@ -39,6 +41,7 @@ export function BidForm({
 
   const isEligible = currentUser?.role === 'MEMBER' && currentUser?.kycStatus === 'VERIFIED';
   const isWindowOpen = status === 'BIDDING_OPEN';
+  const isCurrentLowestBidder = lowestBid && currentUser && lowestBid.memberId === currentUser.id;
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -183,13 +186,28 @@ export function BidForm({
             </div>
           )}
 
+          {isCurrentLowestBidder && (
+            <div className="p-3.5 rounded-xl bg-amber-950/30 border border-amber-500/40 flex items-center space-x-2.5 text-xs text-amber-200">
+              <Info className="w-4 h-4 text-amber-400 flex-shrink-0" />
+              <span>
+                <strong>You currently hold the lowest valid bid</strong> at ₹{lowestBid?.bidAmount.toLocaleString('en-IN')}. You are currently in winning position and cannot outbid yourself until another member bids lower.
+              </span>
+            </div>
+          )}
+
           <button
             type="submit"
-            disabled={loading || numericBid <= 0}
+            disabled={loading || numericBid <= 0 || !!isCurrentLowestBidder}
             className="w-full flex items-center justify-center space-x-2 py-2.5 px-4 rounded-xl bg-gradient-to-r from-indigo-600 via-indigo-500 to-emerald-600 hover:from-indigo-500 hover:to-emerald-500 text-white font-semibold text-xs transition-all shadow-lg shadow-indigo-600/20 disabled:opacity-50 disabled:cursor-not-allowed"
           >
             <Send className="w-3.5 h-3.5" />
-            <span>{loading ? 'Submitting Bid...' : 'Place Official Bid'}</span>
+            <span>
+              {loading
+                ? 'Submitting Bid...'
+                : isCurrentLowestBidder
+                ? 'Currently Lowest Bidder (Cannot Self-Outbid)'
+                : 'Place Official Bid'}
+            </span>
           </button>
         </form>
       )}

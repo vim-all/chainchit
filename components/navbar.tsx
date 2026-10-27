@@ -18,6 +18,7 @@ export function Navbar({ onUserChange }: { onUserChange?: (user: AuthUser | null
   const pathname = usePathname();
   const router = useRouter();
   const [currentUser, setCurrentUser] = useState<AuthUser | null>(null);
+  const [activeCycleCount, setActiveCycleCount] = useState<number>(0);
 
   useEffect(() => {
     fetchSession();
@@ -34,6 +35,11 @@ export function Navbar({ onUserChange }: { onUserChange?: (user: AuthUser | null
         setCurrentUser(null);
         onUserChange?.(null);
       }
+
+      // Check active cycles count
+      const cyclesRes = await fetch('/api/cycles');
+      const cyclesData = await cyclesRes.json();
+      setActiveCycleCount(cyclesData.activeCycles?.length || 0);
     } catch (err) {
       console.error('Failed to fetch session', err);
     }
@@ -80,7 +86,7 @@ export function Navbar({ onUserChange }: { onUserChange?: (user: AuthUser | null
           <Link
             href="/"
             className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
-              pathname === '/'
+              pathname === '/' || pathname.startsWith('/cycle')
                 ? 'bg-neutral-800 text-white shadow-inner'
                 : 'text-neutral-400 hover:text-neutral-200 hover:bg-neutral-900'
             }`}
@@ -88,6 +94,12 @@ export function Navbar({ onUserChange }: { onUserChange?: (user: AuthUser | null
             <span className="flex items-center gap-1.5">
               <Activity className="w-3.5 h-3.5 text-indigo-400" />
               Bidding Room
+              {activeCycleCount > 0 && (
+                <span className="ml-1 px-1.5 py-0.2 rounded-full bg-emerald-500/20 text-emerald-400 text-[10px] font-bold border border-emerald-500/30 flex items-center gap-1">
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                  {activeCycleCount} Live
+                </span>
+              )}
             </span>
           </Link>
 

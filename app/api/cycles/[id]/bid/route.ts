@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { cycles, chitGroups, bids, users, groupMembers, fraudAlerts } from '@/lib/db/schema';
-import { eq, and } from 'drizzle-orm';
+import { eq, and, asc } from 'drizzle-orm';
 import { evaluateBidFraud } from '@/lib/fraud-detector';
 import { logAuditEvent } from '@/lib/audit-logger';
 import { sseBroker } from '@/lib/sse-broker';
@@ -74,6 +74,24 @@ export async function POST(
     if (bidAmount > group.chitValue) {
       return NextResponse.json(
         { error: `Bid amount cannot exceed chit fund pool value (₹${group.chitValue.toLocaleString('en-IN')})` },
+        { status: 400 }
+      );
+    }
+
+    // Check if this member already holds the lowest valid bid (Reverse auction self-outbid prevention)
+    const [currentLowest] = await db
+      .select({ id: bids.id, memberId: bids.memberId, bidAmount: bids.bidAmount })
+      .from(bids)
+      .where(and(eq(bids.cycleId, cycleId), eq(bids.status, 'ACCEPTED')))
+      .orderBy(asc(bids.bidAmount), asc(bids.timestamp))
+      .limit(1);
+
+    if (currentLowest && currentLowest.memberId === memberId) {
+      return NextResponse.json(
+        {
+          error: `You already hold the lowest bid of ₹${currentLowest.bidAmount.toLocaleString('en-IN')}. You cannot bid against yourself until another member outbids you.`,
+          code: 'ALREADY_LOWEST_BIDDER',
+        },
         { status: 400 }
       );
     }
