@@ -4,8 +4,14 @@ import { auditLogs, users } from '@/lib/db/schema';
 import { desc, eq } from 'drizzle-orm';
 import crypto from 'crypto';
 
+import { getCurrentUser } from '@/lib/auth';
+
 export async function GET() {
   try {
+    const user = await getCurrentUser();
+    if (!user || (user.role !== 'FOREMAN' && user.role !== 'OVERSIGHT_VIEWER')) {
+      return NextResponse.json({ error: 'Access denied. Audit logs require Foreman or Oversight role.' }, { status: 403 });
+    }
     const logs = await db
       .select({
         id: auditLogs.id,

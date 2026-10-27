@@ -2,10 +2,11 @@
 
 import React, { useEffect, useState } from 'react';
 import { Navbar } from '@/components/navbar';
-import { FileSpreadsheet, ShieldCheck, Download, RefreshCw, CheckCircle2, AlertTriangle, Key } from 'lucide-react';
+import { FileSpreadsheet, ShieldCheck, Download, RefreshCw, CheckCircle2, AlertTriangle, Key, Lock } from 'lucide-react';
 
 export default function AuditLogPage() {
   const [currentUser, setCurrentUser] = useState<any>(null);
+  const [authChecked, setAuthChecked] = useState(false);
   const [logs, setLogs] = useState<any[]>([]);
   const [integrity, setIntegrity] = useState<any>(null);
   const [loading, setLoading] = useState(true);
@@ -14,6 +15,16 @@ export default function AuditLogPage() {
   async function loadLogs() {
     setLoading(true);
     try {
+      const sessionRes = await fetch('/api/auth/session');
+      const sessionData = await sessionRes.json();
+      setCurrentUser(sessionData.currentUser);
+      setAuthChecked(true);
+
+      if (sessionData.currentUser?.role !== 'FOREMAN' && sessionData.currentUser?.role !== 'OVERSIGHT_VIEWER') {
+        setLoading(false);
+        return;
+      }
+
       const res = await fetch('/api/audit');
       const data = await res.json();
       setLogs(data.logs || []);
@@ -44,6 +55,21 @@ export default function AuditLogPage() {
 
   function handleExport() {
     window.open('/api/audit/export', '_blank');
+  }
+
+  if (authChecked && currentUser?.role !== 'FOREMAN' && currentUser?.role !== 'OVERSIGHT_VIEWER') {
+    return (
+      <div className="min-h-screen bg-neutral-950 text-neutral-100">
+        <Navbar />
+        <div className="max-w-md mx-auto mt-20 p-8 rounded-3xl bg-neutral-900 border border-rose-500/30 text-center">
+          <Lock className="w-12 h-12 text-rose-500 mx-auto mb-3" />
+          <h2 className="text-xl font-bold text-white">403 Access Denied</h2>
+          <p className="text-xs text-neutral-400 mt-2">
+            The cryptographic audit log is restricted to Foreman and Oversight Viewer roles. Members do not have authorization to view system-wide transaction ledgers.
+          </p>
+        </div>
+      </div>
+    );
   }
 
   return (

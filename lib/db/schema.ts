@@ -25,10 +25,11 @@ export const users = pgTable('users', {
   id: uuid('id').defaultRandom().primaryKey(),
   name: text('name').notNull(),
   email: text('email').notNull().unique(),
+  passwordHash: text('password_hash').notNull(),
   mobile: text('mobile').notNull(),
   govtId: text('govt_id').notNull(),
   role: roleEnum('role').default('MEMBER').notNull(),
-  kycStatus: text('kyc_status').default('VERIFIED').notNull(), // 'PENDING' | 'VERIFIED' | 'REJECTED'
+  kycStatus: text('kyc_status').default('PENDING').notNull(), // 'PENDING' | 'VERIFIED' | 'REJECTED'
   trustScore: doublePrecision('trust_score').default(100.0).notNull(),
   createdAt: timestamp('created_at').defaultNow().notNull(),
 });

@@ -2,6 +2,7 @@ import { cookies } from 'next/headers';
 import { db } from './db';
 import { users } from './db/schema';
 import { eq } from 'drizzle-orm';
+import crypto from 'crypto';
 
 export interface AuthUser {
   id: string;
@@ -14,51 +15,45 @@ export interface AuthUser {
 
 const SESSION_COOKIE = 'chainchit_session';
 
+export function hashPassword(password: string): string {
+  const salt = crypto.randomBytes(16).toString('hex');
+  const hash = crypto.scryptSync(password, salt, 64).toString('hex');
+  return `${salt}:${hash}`;
+}
+
+export function verifyPassword(password: string, combined: string): boolean {
+  try {
+    const [salt, key] = combined.split(':');
+    if (!salt || !key) return false;
+    const hash = crypto.scryptSync(password, salt, 64).toString('hex');
+    return crypto.timingSafeEqual(Buffer.from(key, 'hex'), Buffer.from(hash, 'hex'));
+  } catch {
+    return false;
+  }
+}
+
 /**
- * Retrieves the currently active user from cookies, or defaults to the first Member if not set
+ * Retrieves the currently authenticated user from secure session cookie
  */
 export async function getCurrentUser(): Promise<AuthUser | null> {
   const cookieStore = await cookies();
   const sessionUserId = cookieStore.get(SESSION_COOKIE)?.value;
 
-  if (sessionUserId) {
-    const [user] = await db.select().from(users).where(eq(users.id, sessionUserId)).limit(1);
-    if (user) {
-      return {
-        id: user.id,
-        name: user.name,
-        email: user.email,
-        role: user.role,
-        kycStatus: user.kycStatus,
-        trustScore: user.trustScore,
-      };
-    }
+  if (!sessionUserId) {
+    return null;
   }
 
-  // Fallback default: Foreman or first member
-  const [defaultUser] = await db.select().from(users).where(eq(users.role, 'FOREMAN')).limit(1);
-  if (defaultUser) {
-    return {
-      id: defaultUser.id,
-      name: defaultUser.name,
-      email: defaultUser.email,
-      role: defaultUser.role,
-      kycStatus: defaultUser.kycStatus,
-      trustScore: defaultUser.trustScore,
-    };
+  const [user] = await db.select().from(users).where(eq(users.id, sessionUserId)).limit(1);
+  if (!user) {
+    return null;
   }
 
-  return null;
-}
-
-export async function getAllUsers(): Promise<AuthUser[]> {
-  const all = await db.select().from(users).orderBy(users.role, users.name);
-  return all.map((u) => ({
-    id: u.id,
-    name: u.name,
-    email: u.email,
-    role: u.role,
-    kycStatus: u.kycStatus,
-    trustScore: u.trustScore,
-  }));
+  return {
+    id: user.id,
+    name: user.name,
+    email: user.email,
+    role: user.role,
+    kycStatus: user.kycStatus,
+    trustScore: user.trustScore,
+  };
 }

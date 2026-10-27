@@ -1,14 +1,14 @@
 'use client';
 
 import React, { useEffect, useState, useCallback } from 'react';
+import Link from 'next/link';
 import { Navbar } from '@/components/navbar';
 import { CountdownTimer } from '@/components/bidding/countdown-timer';
 import { LiveBidFeed, BidItem } from '@/components/bidding/live-bid-feed';
 import { BidForm } from '@/components/bidding/bid-form';
 import { DistributionChart } from '@/components/fraud/distribution-chart';
-import { SimulationPanel } from '@/components/simulation/simulation-panel';
 import { WinnerModal } from '@/components/bidding/winner-modal';
-import { Coins, Users, Shield, Zap, RefreshCw, AlertTriangle } from 'lucide-react';
+import { Coins, Users, Shield, Zap, RefreshCw, AlertCircle, ArrowRight } from 'lucide-react';
 
 export default function BiddingRoomPage() {
   const [currentUser, setCurrentUser] = useState<any>(null);
@@ -17,7 +17,6 @@ export default function BiddingRoomPage() {
   const [activeCycleId, setActiveCycleId] = useState<string | null>(null);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
-  // 1. Initial Load: Fetch cycles to find the active cycle
   const fetchCycle = useCallback(async (id?: string | null) => {
     try {
       let targetId = id || activeCycleId;
@@ -28,9 +27,16 @@ export default function BiddingRoomPage() {
         setActiveCycleId(targetId);
       }
 
-      if (!targetId) return;
+      if (!targetId) {
+        setCycleData(null);
+        return;
+      }
 
       const res = await fetch(`/api/cycles/${targetId}`);
+      if (!res.ok) {
+        setCycleData(null);
+        return;
+      }
       const data = await res.json();
       setCycleData(data);
     } catch (err) {
@@ -44,7 +50,7 @@ export default function BiddingRoomPage() {
     fetchCycle();
   }, [fetchCycle]);
 
-  // 2. Real-Time SSE Stream Subscription (FR19)
+  // Real-Time SSE Stream Subscription (FR19)
   useEffect(() => {
     if (!activeCycleId) return;
 
@@ -57,20 +63,15 @@ export default function BiddingRoomPage() {
 
         setCycleData((prev: any) => {
           if (!prev) return prev;
-          // Avoid duplicate inserts
           const exists = prev.bids.some((b: BidItem) => b.id === newBid.id);
           const updatedBids = exists ? prev.bids : [...prev.bids, newBid];
-          // Re-sort lowest first
           updatedBids.sort((a: BidItem, b: BidItem) => a.bidAmount - b.bidAmount);
 
-          return {
-            ...prev,
-            bids: updatedBids,
-          };
+          return { ...prev, bids: updatedBids };
         });
 
         if (payload.isAlert) {
-          setToastMessage(`🚨 Fraud Alert: Bid of ₹${newBid.bidAmount.toLocaleString('en-IN')} by ${newBid.memberName} flagged!`);
+          setToastMessage(`🚨 Flagged: Bid of ₹${newBid.bidAmount.toLocaleString('en-IN')} by ${newBid.memberName} under investigation.`);
         } else {
           setToastMessage(`⚡ New Bid: ₹${newBid.bidAmount.toLocaleString('en-IN')} by ${newBid.memberName}`);
         }
@@ -81,41 +82,57 @@ export default function BiddingRoomPage() {
       }
     });
 
-    eventSource.addEventListener('WINNER_DETERMINED', (e) => {
-      try {
-        fetchCycle(activeCycleId);
-      } catch (err) {
-        console.error('Error parsing winner:', err);
-      }
-    });
-
-    eventSource.addEventListener('CYCLE_SETTLED', () => {
-      fetchCycle(activeCycleId);
-    });
-
-    eventSource.addEventListener('CYCLE_RESET', () => {
-      fetchCycle(activeCycleId);
-    });
+    eventSource.addEventListener('WINNER_DETERMINED', () => fetchCycle(activeCycleId));
+    eventSource.addEventListener('CYCLE_SETTLED', () => fetchCycle(activeCycleId));
+    eventSource.addEventListener('ALERT_RESOLVED', () => fetchCycle(activeCycleId));
 
     return () => {
       eventSource.close();
     };
   }, [activeCycleId, fetchCycle]);
 
-  if (loading || !cycleData) {
+  if (loading) {
     return (
       <div className="min-h-screen bg-neutral-950 text-neutral-100 flex items-center justify-center">
-        <div className="flex flex-col items-center gap-3">
-          <RefreshCw className="w-8 h-8 text-indigo-500 animate-spin" />
-          <p className="text-sm text-neutral-400 font-mono">Loading ChainChit Bidding Engine...</p>
-        </div>
+        <RefreshCw className="w-8 h-8 text-indigo-500 animate-spin" />
       </div>
     );
   }
 
-  const { cycle, group, winner, enrolledMembers, bids, lowestValidBid } = cycleData;
+  // If no cycle is currently configured in the system
+  if (!cycleData) {
+    return (
+      <div className="min-h-screen bg-neutral-950 text-neutral-100">
+        <Navbar onUserChange={(user) => setCurrentUser(user)} />
+        <main className="max-w-2xl mx-auto px-4 py-20 text-center">
+          <div className="p-8 rounded-3xl bg-neutral-900 border border-neutral-800 shadow-2xl">
+            <Coins className="w-12 h-12 text-amber-400 mx-auto mb-3" />
+            <h2 className="text-xl font-bold text-white">No Active Bidding Cycle</h2>
+            <p className="text-xs text-neutral-400 mt-2">
+              {currentUser?.role === 'FOREMAN'
+                ? 'No chit group or cycle has been opened yet. Use the Foreman Command Center to approve members, create a chit fund group, and launch Cycle 1.'
+                : 'Waiting for the Foreman to configure and open the next reverse-auction bidding window.'}
+            </p>
 
-  // Check if lowest overall bid is flagged
+            {currentUser?.role === 'FOREMAN' && (
+              <div className="mt-6">
+                <Link
+                  href="/foreman"
+                  className="inline-flex items-center space-x-2 py-2.5 px-5 rounded-xl bg-amber-500 hover:bg-amber-400 text-neutral-950 font-bold text-xs transition-all shadow-lg shadow-amber-500/20"
+                >
+                  <span>Open Foreman Controls</span>
+                  <ArrowRight className="w-4 h-4" />
+                </Link>
+              </div>
+            )}
+          </div>
+        </main>
+      </div>
+    );
+  }
+
+  const { cycle, group, winner, enrolledMembers = [], bids = [] } = cycleData;
+
   const lowestOverallBid = bids[0];
   const isLowestBidBlockedByFraud =
     lowestOverallBid &&
@@ -123,10 +140,10 @@ export default function BiddingRoomPage() {
     cycle.status !== 'BIDDING_OPEN';
 
   return (
-    <div className="min-h-screen bg-neutral-950 text-neutral-100 selection:bg-indigo-500 selection:text-white">
+    <div className="min-h-screen bg-neutral-950 text-neutral-100">
       <Navbar onUserChange={(user) => setCurrentUser(user)} />
 
-      {/* Floating Real-time Notification Banner */}
+      {/* Real-time Notification Banner */}
       {toastMessage && (
         <div className="fixed bottom-6 right-6 z-50 max-w-md p-3.5 rounded-2xl bg-neutral-900/95 border border-indigo-500/50 shadow-2xl backdrop-blur-md flex items-center space-x-3 text-xs animate-in slide-in-from-bottom-5">
           <Zap className="w-4 h-4 text-amber-400 flex-shrink-0 animate-pulse" />
@@ -135,7 +152,7 @@ export default function BiddingRoomPage() {
       )}
 
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-6">
-        {/* Chit Group & Active Cycle Header Banner */}
+        {/* Chit Group & Active Cycle Header */}
         <div className="rounded-3xl bg-gradient-to-r from-neutral-900 via-neutral-900/80 to-indigo-950/40 border border-neutral-800 p-6 shadow-xl backdrop-blur-md">
           <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
             <div>
@@ -144,7 +161,7 @@ export default function BiddingRoomPage() {
                   {group.name}
                 </span>
                 <span className="text-xs text-neutral-400">
-                  Cycle #{cycle.cycleNumber} of 20
+                  Cycle #{cycle.cycleNumber} of {group.numberOfMembers}
                 </span>
                 <span
                   className={`text-[10px] uppercase font-bold px-2 py-0.5 rounded-md border ${
@@ -163,11 +180,11 @@ export default function BiddingRoomPage() {
                 Live Reverse Auction & Fraud Guard
               </h1>
               <p className="text-xs sm:text-sm text-neutral-400 mt-1 max-w-2xl">
-                Enforces competitive member bidding with in-line Z-Score underbid analysis ($\mu=₹{group.historicalMeanBid.toLocaleString('en-IN')}, \sigma=₹{group.historicalSdBid.toLocaleString('en-IN')}$).
+                Place competitive reverse-auction prize bids. The lowest valid bid claims the payout, and the remaining discount is distributed as dividends to enrolled members.
               </p>
             </div>
 
-            {/* Header Metrics & Countdown Timer */}
+            {/* Metrics & Countdown Timer */}
             <div className="flex flex-wrap items-center gap-4">
               <div className="flex items-center space-x-3 px-4 py-2 rounded-2xl bg-neutral-950/60 border border-neutral-800">
                 <Coins className="w-5 h-5 text-amber-400" />
@@ -189,7 +206,6 @@ export default function BiddingRoomPage() {
                 </div>
               </div>
 
-              {/* Countdown Timer */}
               <CountdownTimer
                 endTime={cycle.biddingEndTime}
                 durationSeconds={cycle.biddingDurationSeconds}
@@ -200,7 +216,18 @@ export default function BiddingRoomPage() {
           </div>
         </div>
 
-        {/* Winner & Settlement Modal (Appears when window is closed or settled) */}
+        {/* Member KYC Pending Alert */}
+        {currentUser?.role === 'MEMBER' && currentUser?.kycStatus === 'PENDING' && (
+          <div className="p-4 rounded-2xl bg-amber-950/30 border border-amber-500/40 flex items-center space-x-3 text-xs text-amber-200">
+            <AlertCircle className="w-5 h-5 text-amber-400 flex-shrink-0" />
+            <div>
+              <strong className="font-bold">KYC Verification Pending: </strong>
+              Your government identity submission is under review by the Foreman. You will be able to submit bids as soon as your KYC is approved.
+            </div>
+          </div>
+        )}
+
+        {/* Winner & Settlement Modal */}
         <WinnerModal
           cycleId={cycle.id}
           winner={winner}
@@ -212,15 +239,9 @@ export default function BiddingRoomPage() {
           onSettled={() => fetchCycle(activeCycleId)}
         />
 
-        {/* Multi-Bidder Coursework Simulator Controller */}
-        <SimulationPanel
-          cycleId={cycle.id}
-          onActionComplete={() => fetchCycle(activeCycleId)}
-        />
-
-        {/* Core 2-Column Workstation Layout */}
+        {/* 2-Column Workstation Layout */}
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-          {/* Left Column: Bid Submission Form & Bell Curve Anomaly Visualizer */}
+          {/* Left Column: Bid Form & Anomaly Bell Curve */}
           <div className="lg:col-span-7 space-y-6">
             <BidForm
               cycleId={cycle.id}
@@ -239,14 +260,14 @@ export default function BiddingRoomPage() {
             />
           </div>
 
-          {/* Right Column: Real-Time Live Bids Feed & Member Roster */}
+          {/* Right Column: Live Feed & Participants */}
           <div className="lg:col-span-5 space-y-6">
             <div className="rounded-2xl bg-neutral-900/60 border border-neutral-800/80 p-5 backdrop-blur-md">
               <div className="flex items-center justify-between mb-4">
                 <div className="flex items-center space-x-2">
                   <div className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse" />
                   <h3 className="text-sm font-bold text-white uppercase tracking-wider">
-                    Live Bidding Feed (FR19)
+                    Live Bidding Feed
                   </h3>
                 </div>
                 <span className="text-xs font-mono text-neutral-400">
@@ -257,10 +278,10 @@ export default function BiddingRoomPage() {
               <LiveBidFeed bids={bids} />
             </div>
 
-            {/* Enrolled Members KYC & Trust Status Pillbox */}
+            {/* Enrolled Participants Roster */}
             <div className="rounded-2xl bg-neutral-900/40 border border-neutral-800/80 p-4">
               <h4 className="text-xs font-bold text-neutral-400 uppercase tracking-wider mb-2.5 flex items-center gap-1.5">
-                <Shield className="w-3.5 h-3.5 text-indigo-400" /> Enrolled Participants & Trust
+                <Shield className="w-3.5 h-3.5 text-indigo-400" /> Enrolled Group Participants
               </h4>
               <div className="space-y-1.5">
                 {enrolledMembers.map((member: any) => (
@@ -268,21 +289,10 @@ export default function BiddingRoomPage() {
                     key={member.id}
                     className="flex items-center justify-between p-2 rounded-xl bg-neutral-950/60 border border-neutral-800/60 text-xs"
                   >
-                    <div className="flex items-center space-x-2">
-                      <div className="w-6 h-6 rounded-md bg-neutral-800 text-neutral-300 flex items-center justify-center font-bold text-[10px]">
-                        {member.name.charAt(0)}
-                      </div>
-                      <span className="font-medium text-neutral-200">{member.name}</span>
-                    </div>
-
-                    <div className="flex items-center space-x-2">
-                      <span className="text-[10px] font-semibold text-emerald-400 bg-emerald-500/10 px-1.5 py-0.2 rounded border border-emerald-500/20">
-                        {member.kycStatus}
-                      </span>
-                      <span className="font-mono text-[11px] text-neutral-400">
-                        Trust: <strong className="text-white">{member.trustScore}</strong>
-                      </span>
-                    </div>
+                    <span className="font-medium text-neutral-200">{member.name}</span>
+                    <span className="font-mono text-[11px] text-neutral-400">
+                      Trust: <strong className="text-white">{member.trustScore}</strong>
+                    </span>
                   </div>
                 ))}
               </div>

@@ -2,39 +2,161 @@
 
 import React, { useEffect, useState } from 'react';
 import { Navbar } from '@/components/navbar';
-import { ShieldCheck, AlertOctagon, CheckCircle2, XCircle, Sliders, RefreshCw, UserCheck } from 'lucide-react';
+import {
+  ShieldCheck,
+  AlertOctagon,
+  CheckCircle2,
+  XCircle,
+  Users,
+  PlusCircle,
+  Play,
+  Clock,
+  Coins,
+  RefreshCw,
+  Lock,
+} from 'lucide-react';
 
 export default function ForemanDashboard() {
   const [currentUser, setCurrentUser] = useState<any>(null);
+  const [authChecked, setAuthChecked] = useState(false);
+  const [activeTab, setActiveTab] = useState<'triage' | 'kyc' | 'create_group' | 'launch_cycle'>('kyc');
+
+  const [members, setMembers] = useState<any[]>([]);
+  const [groups, setGroups] = useState<any[]>([]);
   const [cycleData, setCycleData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
-  const [actionLoading, setActionLoading] = useState<string | null>(null);
-  const [statusMsg, setStatusMsg] = useState<string | null>(null);
+  const [msg, setMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
-  async function loadData() {
+  // Group creation form state
+  const [groupForm, setGroupForm] = useState({
+    name: 'Gold Wealth Chit 2026',
+    chitValue: '100000',
+    numberOfMembers: '5',
+    cycleDurationDays: '30',
+    fraudThresholdZ: '2.5',
+    selectedMemberIds: [] as string[],
+  });
+
+  // Cycle launch state
+  const [cycleDurationSeconds, setCycleDurationSeconds] = useState('180');
+
+  useEffect(() => {
+    loadAllData();
+  }, []);
+
+  async function loadAllData() {
+    setLoading(true);
     try {
-      const listRes = await fetch('/api/cycles');
-      const listData = await listRes.json();
-      const activeId = listData.activeCycleId;
-      if (!activeId) return;
+      // 1. Session check
+      const sessionRes = await fetch('/api/auth/session');
+      const sessionData = await sessionRes.json();
+      setCurrentUser(sessionData.currentUser);
+      setAuthChecked(true);
 
-      const res = await fetch(`/api/cycles/${activeId}`);
-      const data = await res.json();
-      setCycleData(data);
-    } catch (err) {
-      console.error('Error loading foreman data:', err);
+      if (sessionData.currentUser?.role !== 'FOREMAN') {
+        setLoading(false);
+        return;
+      }
+
+      // 2. Load Members
+      const kycRes = await fetch('/api/foreman/kyc');
+      const kycData = await kycRes.json();
+      setMembers(kycData.members || []);
+
+      // 3. Load Groups
+      const groupsRes = await fetch('/api/foreman/groups');
+      const groupsData = await groupsRes.json();
+      setGroups(groupsData.groups || []);
+
+      // 4. Load Active Cycle (if any)
+      const cyclesRes = await fetch('/api/cycles');
+      const cyclesData = await cyclesRes.json();
+      if (cyclesData.activeCycleId) {
+        const cycleRes = await fetch(`/api/cycles/${cyclesData.activeCycleId}`);
+        const cycleJson = await cycleRes.json();
+        setCycleData(cycleJson);
+      }
+    } catch (err: any) {
+      console.error('Error loading foreman dashboard:', err);
     } finally {
       setLoading(false);
     }
   }
 
-  useEffect(() => {
-    loadData();
-  }, []);
+  // Handle KYC Action
+  async function handleKycAction(memberId: string, action: 'APPROVE' | 'REJECT') {
+    let rejectionReason = '';
+    if (action === 'REJECT') {
+      rejectionReason = prompt('Enter mandatory rejection reason:') || '';
+      if (!rejectionReason.trim()) return;
+    }
 
+    try {
+      const res = await fetch('/api/foreman/kyc', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ memberId, action, rejectionReason }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Action failed');
+
+      setMsg({ type: 'success', text: `Member KYC ${action === 'APPROVE' ? 'Approved' : 'Rejected'} successfully.` });
+      await loadAllData();
+    } catch (err: any) {
+      setMsg({ type: 'error', text: err.message });
+    }
+  }
+
+  // Handle Create Chit Group
+  async function handleCreateGroup(e: React.FormEvent) {
+    e.preventDefault();
+    try {
+      const res = await fetch('/api/foreman/groups', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: groupForm.name,
+          chitValue: groupForm.chitValue,
+          numberOfMembers: groupForm.numberOfMembers,
+          cycleDurationDays: groupForm.cycleDurationDays,
+          fraudThresholdZ: groupForm.fraudThresholdZ,
+          memberIds: groupForm.selectedMemberIds,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to create group');
+
+      setMsg({ type: 'success', text: `Chit Group "${groupForm.name}" created with ${groupForm.selectedMemberIds.length} members enrolled.` });
+      setActiveTab('launch_cycle');
+      await loadAllData();
+    } catch (err: any) {
+      setMsg({ type: 'error', text: err.message });
+    }
+  }
+
+  // Handle Launch Cycle
+  async function handleLaunchCycle(groupId: string) {
+    try {
+      const res = await fetch('/api/foreman/cycles', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          groupId,
+          durationSeconds: parseInt(cycleDurationSeconds) || 180,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to start cycle');
+
+      setMsg({ type: 'success', text: `Cycle #${data.cycle.cycleNumber} opened with ${cycleDurationSeconds}s timer!` });
+      await loadAllData();
+    } catch (err: any) {
+      setMsg({ type: 'error', text: err.message });
+    }
+  }
+
+  // Handle Fraud Alert Adjudication
   async function handleOverride(alertId: string, action: 'OVERRIDDEN' | 'DISQUALIFIED') {
-    setActionLoading(alertId);
-    setStatusMsg(null);
     try {
       const res = await fetch('/api/fraud/override', {
         method: 'POST',
@@ -43,22 +165,20 @@ export default function ForemanDashboard() {
           alertId,
           action,
           foremanId: currentUser?.id,
-          reason: action === 'OVERRIDDEN' ? 'Foreman verified legitimate underbid' : 'Foreman confirmed collusive anomaly',
+          reason: action === 'OVERRIDDEN' ? 'Foreman approved legitimate low bid' : 'Foreman confirmed collusive underbid',
         }),
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Failed to update alert');
+      if (!res.ok) throw new Error(data.error || 'Override failed');
 
-      setStatusMsg(`Alert marked as ${action}! Bid status adjusted accordingly.`);
-      await loadData();
+      setMsg({ type: 'success', text: `Alert marked as ${action}. Bid status updated.` });
+      await loadAllData();
     } catch (err: any) {
-      setStatusMsg(`Error: ${err.message}`);
-    } finally {
-      setActionLoading(null);
+      setMsg({ type: 'error', text: err.message });
     }
   }
 
-  if (loading || !cycleData) {
+  if (loading) {
     return (
       <div className="min-h-screen bg-neutral-950 text-neutral-100 flex items-center justify-center">
         <RefreshCw className="w-8 h-8 text-amber-500 animate-spin" />
@@ -66,7 +186,25 @@ export default function ForemanDashboard() {
     );
   }
 
-  const { cycle, group, alerts = [], enrolledMembers } = cycleData;
+  // Access Control Guard
+  if (authChecked && currentUser?.role !== 'FOREMAN') {
+    return (
+      <div className="min-h-screen bg-neutral-950 text-neutral-100">
+        <Navbar />
+        <div className="max-w-md mx-auto mt-20 p-8 rounded-3xl bg-neutral-900 border border-rose-500/30 text-center">
+          <Lock className="w-12 h-12 text-rose-500 mx-auto mb-3" />
+          <h2 className="text-xl font-bold text-white">403 Access Denied</h2>
+          <p className="text-xs text-neutral-400 mt-2">
+            This module requires Foreman privileges. You are currently authenticated as{' '}
+            <strong className="text-white">{currentUser?.name || 'Guest'}</strong> ({currentUser?.role}).
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  const alerts = cycleData?.alerts || [];
+  const verifiedMembers = members.filter((m) => m.kycStatus === 'VERIFIED');
 
   return (
     <div className="min-h-screen bg-neutral-950 text-neutral-100">
@@ -79,130 +217,359 @@ export default function ForemanDashboard() {
             <span className="px-2.5 py-1 rounded-lg bg-amber-500/20 text-amber-400 font-bold text-xs uppercase tracking-wider border border-amber-500/30 flex items-center gap-1.5">
               <ShieldCheck className="w-3.5 h-3.5" /> Foreman Command Center
             </span>
-            <span className="text-xs text-neutral-400">Chit: {group.name}</span>
           </div>
           <h1 className="text-2xl sm:text-3xl font-extrabold text-white tracking-tight">
-            Fraud Alert Triage & Cycle Governance
+            Chit Group Operations & Fraud Triage
           </h1>
           <p className="text-xs sm:text-sm text-neutral-400 mt-1 max-w-2xl">
-            Review in-line statistical anomaly flags, adjudicate flagged bids, and manage cycle parameters.
+            Manage member KYC approvals, configure and launch live bidding cycles, and review statistical anomaly alerts.
           </p>
         </div>
 
-        {statusMsg && (
-          <div className="p-3.5 rounded-2xl bg-neutral-900 border border-indigo-500/40 text-xs font-mono text-indigo-200">
-            {statusMsg}
+        {msg && (
+          <div
+            className={`p-3.5 rounded-2xl border text-xs font-mono flex items-center justify-between ${
+              msg.type === 'success'
+                ? 'bg-emerald-950/30 border-emerald-500/30 text-emerald-200'
+                : 'bg-rose-950/30 border-rose-500/30 text-rose-200'
+            }`}
+          >
+            <span>{msg.text}</span>
+            <button onClick={() => setMsg(null)} className="text-xs opacity-60 hover:opacity-100">✕</button>
           </div>
         )}
 
-        {/* Section 1: Active Fraud Alerts (FR26) */}
-        <div className="rounded-2xl bg-neutral-900/60 border border-neutral-800/80 p-6 space-y-4">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center space-x-2">
-              <AlertOctagon className="w-5 h-5 text-rose-500" />
-              <h2 className="text-sm font-bold text-white uppercase tracking-wider">
-                Flagged Anomaly Triage (FR24 & FR26)
-              </h2>
-            </div>
-            <span className="text-xs font-mono text-neutral-400">
-              {alerts.length} Total Alerts Logged
-            </span>
-          </div>
+        {/* Navigation Tabs */}
+        <div className="flex flex-wrap gap-2 border-b border-neutral-800 pb-3">
+          <button
+            onClick={() => setActiveTab('kyc')}
+            className={`px-4 py-2 rounded-xl text-xs font-semibold transition-all ${
+              activeTab === 'kyc'
+                ? 'bg-amber-500 text-neutral-950 shadow-lg shadow-amber-500/20 font-bold'
+                : 'bg-neutral-900 text-neutral-400 hover:text-white border border-neutral-800'
+            }`}
+          >
+            Member KYC Approvals ({members.filter((m) => m.kycStatus === 'PENDING').length} Pending)
+          </button>
 
-          {alerts.length === 0 ? (
-            <div className="p-8 text-center rounded-xl bg-neutral-950/40 border border-neutral-800">
-              <CheckCircle2 className="w-8 h-8 text-emerald-500 mx-auto mb-2" />
-              <p className="text-xs font-medium text-neutral-300">
-                No active fraud alerts detected for this cycle. All bids have complied with statistical thresholds.
-              </p>
-              <p className="text-[11px] text-neutral-500 mt-1">
-                You can trigger a demo underbid via the Simulator on the Bidding Room page.
-              </p>
+          <button
+            onClick={() => setActiveTab('create_group')}
+            className={`px-4 py-2 rounded-xl text-xs font-semibold transition-all ${
+              activeTab === 'create_group'
+                ? 'bg-amber-500 text-neutral-950 shadow-lg shadow-amber-500/20 font-bold'
+                : 'bg-neutral-900 text-neutral-400 hover:text-white border border-neutral-800'
+            }`}
+          >
+            Create Chit Group ({groups.length} Existing)
+          </button>
+
+          <button
+            onClick={() => setActiveTab('launch_cycle')}
+            className={`px-4 py-2 rounded-xl text-xs font-semibold transition-all ${
+              activeTab === 'launch_cycle'
+                ? 'bg-amber-500 text-neutral-950 shadow-lg shadow-amber-500/20 font-bold'
+                : 'bg-neutral-900 text-neutral-400 hover:text-white border border-neutral-800'
+            }`}
+          >
+            Launch Bidding Cycle
+          </button>
+
+          <button
+            onClick={() => setActiveTab('triage')}
+            className={`px-4 py-2 rounded-xl text-xs font-semibold transition-all ${
+              activeTab === 'triage'
+                ? 'bg-amber-500 text-neutral-950 shadow-lg shadow-amber-500/20 font-bold'
+                : 'bg-neutral-900 text-neutral-400 hover:text-white border border-neutral-800'
+            }`}
+          >
+            Fraud Alerts ({alerts.filter((a: any) => !a.resolved).length} Active)
+          </button>
+        </div>
+
+        {/* TAB 1: KYC Approvals */}
+        {activeTab === 'kyc' && (
+          <div className="rounded-2xl bg-neutral-900/60 border border-neutral-800/80 p-6 space-y-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <h2 className="text-sm font-bold text-white uppercase tracking-wider">
+                  Member KYC Verification Requests (FR04)
+                </h2>
+                <p className="text-xs text-neutral-400 mt-0.5">
+                  Review government IDs uploaded by registered members before allowing live bids.
+                </p>
+              </div>
             </div>
-          ) : (
-            <div className="space-y-3">
-              {alerts.map((alert: any) => (
-                <div
-                  key={alert.id}
-                  className="p-4 rounded-xl bg-neutral-950/80 border border-rose-500/30 flex flex-col md:flex-row items-start md:items-center justify-between gap-4"
-                >
-                  <div className="space-y-1">
-                    <div className="flex items-center space-x-2">
-                      <span className="text-xs font-bold text-white">{alert.memberName}</span>
-                      <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-rose-500/20 text-rose-300 border border-rose-500/30">
-                        {alert.ruleViolated}
-                      </span>
-                      <span className="text-[10px] font-mono text-neutral-500">
-                        {new Date(alert.createdAt).toLocaleTimeString()}
-                      </span>
+
+            {members.length === 0 ? (
+              <div className="p-8 text-center rounded-xl bg-neutral-950/40 border border-neutral-800 text-xs text-neutral-400">
+                No members have registered yet. Once members register on the Register page, they will appear here.
+              </div>
+            ) : (
+              <div className="divide-y divide-neutral-800/80 rounded-xl bg-neutral-950/60 border border-neutral-800 overflow-hidden">
+                {members.map((member) => (
+                  <div key={member.id} className="p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+                    <div>
+                      <div className="flex items-center space-x-2">
+                        <span className="text-sm font-bold text-white">{member.name}</span>
+                        <span
+                          className={`text-[10px] font-bold px-2 py-0.5 rounded border ${
+                            member.kycStatus === 'VERIFIED'
+                              ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30'
+                              : member.kycStatus === 'PENDING'
+                              ? 'bg-amber-500/10 text-amber-400 border-amber-500/30'
+                              : 'bg-rose-500/10 text-rose-400 border-rose-500/30'
+                          }`}
+                        >
+                          {member.kycStatus}
+                        </span>
+                      </div>
+                      <div className="text-xs text-neutral-400 font-mono mt-1 space-x-3">
+                        <span>Email: {member.email}</span>
+                        <span>•</span>
+                        <span>Mobile: {member.mobile}</span>
+                        <span>•</span>
+                        <span>Govt ID: <strong className="text-neutral-200">{member.govtId}</strong></span>
+                      </div>
                     </div>
-                    <p className="text-xs text-rose-200">{alert.details}</p>
-                    {alert.resolved && (
-                      <span className="inline-block text-[10px] uppercase font-bold text-emerald-400">
-                        Resolution: {alert.resolutionAction}
-                      </span>
+
+                    {member.kycStatus === 'PENDING' && (
+                      <div className="flex items-center space-x-2">
+                        <button
+                          onClick={() => handleKycAction(member.id, 'APPROVE')}
+                          className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold transition-all flex items-center gap-1.5 shadow-md shadow-emerald-600/20"
+                        >
+                          <CheckCircle2 className="w-3.5 h-3.5" /> Approve KYC
+                        </button>
+                        <button
+                          onClick={() => handleKycAction(member.id, 'REJECT')}
+                          className="px-3 py-1.5 rounded-lg bg-rose-600 hover:bg-rose-500 text-white text-xs font-semibold transition-all flex items-center gap-1.5 shadow-md shadow-rose-600/20"
+                        >
+                          <XCircle className="w-3.5 h-3.5" /> Reject
+                        </button>
+                      </div>
                     )}
                   </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
 
-                  {!alert.resolved && (
-                    <div className="flex items-center space-x-2">
-                      <button
-                        onClick={() => handleOverride(alert.id, 'OVERRIDDEN')}
-                        disabled={actionLoading === alert.id}
-                        className="px-3 py-1.5 rounded-lg bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 text-xs font-semibold border border-emerald-500/30 transition-all flex items-center gap-1.5"
-                      >
-                        <CheckCircle2 className="w-3.5 h-3.5" />
-                        <span>Override & Allow</span>
-                      </button>
+        {/* TAB 2: Create Chit Group */}
+        {activeTab === 'create_group' && (
+          <div className="rounded-2xl bg-neutral-900/60 border border-neutral-800/80 p-6 space-y-5">
+            <div>
+              <h2 className="text-sm font-bold text-white uppercase tracking-wider">
+                Create New Chit Fund Group (FR06 & FR07)
+              </h2>
+              <p className="text-xs text-neutral-400 mt-0.5">
+                Configure pool value, duration, and enroll KYC-verified members.
+              </p>
+            </div>
+
+            <form onSubmit={handleCreateGroup} className="space-y-4 max-w-xl">
+              <div>
+                <label className="block text-xs font-semibold text-neutral-300 mb-1">Group Name</label>
+                <input
+                  type="text"
+                  required
+                  value={groupForm.name}
+                  onChange={(e) => setGroupForm({ ...groupForm, name: e.target.value })}
+                  className="w-full bg-neutral-950 border border-neutral-800 rounded-xl py-2 px-3 text-sm text-white focus:outline-none focus:border-amber-500"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold text-neutral-300 mb-1">Chit Pool Value (₹)</label>
+                  <input
+                    type="number"
+                    step="1000"
+                    required
+                    value={groupForm.chitValue}
+                    onChange={(e) => setGroupForm({ ...groupForm, chitValue: e.target.value })}
+                    className="w-full bg-neutral-950 border border-neutral-800 rounded-xl py-2 px-3 text-sm text-white font-mono focus:outline-none focus:border-amber-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-neutral-300 mb-1">Number of Members</label>
+                  <input
+                    type="number"
+                    min="2"
+                    required
+                    value={groupForm.numberOfMembers}
+                    onChange={(e) => setGroupForm({ ...groupForm, numberOfMembers: e.target.value })}
+                    className="w-full bg-neutral-950 border border-neutral-800 rounded-xl py-2 px-3 text-sm text-white font-mono focus:outline-none focus:border-amber-500"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-neutral-300 mb-1.5">
+                  Enroll Verified Members ({groupForm.selectedMemberIds.length} Selected)
+                </label>
+                {verifiedMembers.length === 0 ? (
+                  <p className="text-xs text-amber-400 bg-amber-500/10 p-3 rounded-xl border border-amber-500/30">
+                    No KYC-verified members found. Approve members in the "Member KYC Approvals" tab first.
+                  </p>
+                ) : (
+                  <div className="max-h-48 overflow-y-auto space-y-1.5 p-2 rounded-xl bg-neutral-950 border border-neutral-800">
+                    {verifiedMembers.map((m) => {
+                      const isSelected = groupForm.selectedMemberIds.includes(m.id);
+                      return (
+                        <label
+                          key={m.id}
+                          className="flex items-center space-x-2.5 p-2 rounded-lg hover:bg-neutral-900 cursor-pointer text-xs"
+                        >
+                          <input
+                            type="checkbox"
+                            checked={isSelected}
+                            onChange={(e) => {
+                              if (e.target.checked) {
+                                setGroupForm({ ...groupForm, selectedMemberIds: [...groupForm.selectedMemberIds, m.id] });
+                              } else {
+                                setGroupForm({
+                                  ...groupForm,
+                                  selectedMemberIds: groupForm.selectedMemberIds.filter((id) => id !== m.id),
+                                });
+                              }
+                            }}
+                            className="rounded border-neutral-700 text-amber-500 focus:ring-0"
+                          />
+                          <span className="font-medium text-white">{m.name}</span>
+                          <span className="text-neutral-500 font-mono">({m.email})</span>
+                        </label>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+
+              <button
+                type="submit"
+                className="py-2.5 px-5 rounded-xl bg-amber-500 hover:bg-amber-400 text-neutral-950 font-bold text-xs transition-all shadow-lg shadow-amber-500/20"
+              >
+                Create Chit Group
+              </button>
+            </form>
+          </div>
+        )}
+
+        {/* TAB 3: Launch Cycle */}
+        {activeTab === 'launch_cycle' && (
+          <div className="rounded-2xl bg-neutral-900/60 border border-neutral-800/80 p-6 space-y-4">
+            <div>
+              <h2 className="text-sm font-bold text-white uppercase tracking-wider">
+                Launch Live Bidding Cycle (FR17)
+              </h2>
+              <p className="text-xs text-neutral-400 mt-0.5">
+                Opens the countdown bidding window for members to place reverse auction bids.
+              </p>
+            </div>
+
+            {groups.length === 0 ? (
+              <div className="p-8 text-center rounded-xl bg-neutral-950/40 border border-neutral-800 text-xs text-neutral-400">
+                No chit groups created yet. Create a group in the "Create Chit Group" tab first.
+              </div>
+            ) : (
+              <div className="space-y-4">
+                <div className="flex items-center space-x-3 max-w-xs">
+                  <label className="text-xs font-semibold text-neutral-300">Bidding Window Timer (Seconds):</label>
+                  <input
+                    type="number"
+                    min="30"
+                    step="30"
+                    value={cycleDurationSeconds}
+                    onChange={(e) => setCycleDurationSeconds(e.target.value)}
+                    className="w-24 bg-neutral-950 border border-neutral-800 rounded-xl py-1.5 px-3 text-xs text-white font-mono focus:outline-none focus:border-amber-500"
+                  />
+                </div>
+
+                <div className="divide-y divide-neutral-800 rounded-xl bg-neutral-950/60 border border-neutral-800 overflow-hidden">
+                  {groups.map((group) => (
+                    <div key={group.id} className="p-4 flex items-center justify-between">
+                      <div>
+                        <div className="text-sm font-bold text-white">{group.name}</div>
+                        <div className="text-xs text-neutral-400 font-mono mt-0.5 space-x-3">
+                          <span>Pool: ₹{group.chitValue.toLocaleString('en-IN')}</span>
+                          <span>•</span>
+                          <span>Capacity: {group.numberOfMembers} Members</span>
+                        </div>
+                      </div>
 
                       <button
-                        onClick={() => handleOverride(alert.id, 'DISQUALIFIED')}
-                        disabled={actionLoading === alert.id}
-                        className="px-3 py-1.5 rounded-lg bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 text-xs font-semibold border border-rose-500/30 transition-all flex items-center gap-1.5"
+                        onClick={() => handleLaunchCycle(group.id)}
+                        className="px-4 py-2 rounded-xl bg-gradient-to-r from-amber-500 to-emerald-500 hover:from-amber-400 hover:to-emerald-400 text-neutral-950 font-bold text-xs transition-all flex items-center gap-1.5 shadow-lg shadow-amber-500/20"
                       >
-                        <XCircle className="w-3.5 h-3.5" />
-                        <span>Disqualify Bid</span>
+                        <Play className="w-3.5 h-3.5" /> Open Bidding Window
                       </button>
                     </div>
-                  )}
+                  ))}
                 </div>
-              ))}
-            </div>
-          )}
-        </div>
-
-        {/* Section 2: Group Statistical Parameters & Governance */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-          <div className="p-5 rounded-2xl bg-neutral-900/60 border border-neutral-800 space-y-2">
-            <div className="text-[10px] font-bold uppercase text-neutral-400">Historical Mean ($\mu$)</div>
-            <div className="text-xl font-bold font-mono text-white">
-              ₹{group.historicalMeanBid.toLocaleString('en-IN')}
-            </div>
-            <p className="text-[11px] text-neutral-500">
-              Computed from verified bids across completed cycles.
-            </p>
+              </div>
+            )}
           </div>
+        )}
 
-          <div className="p-5 rounded-2xl bg-neutral-900/60 border border-neutral-800 space-y-2">
-            <div className="text-[10px] font-bold uppercase text-neutral-400">Standard Deviation ($\sigma$)</div>
-            <div className="text-xl font-bold font-mono text-white">
-              ₹{group.historicalSdBid.toLocaleString('en-IN')}
+        {/* TAB 4: Fraud Alerts */}
+        {activeTab === 'triage' && (
+          <div className="rounded-2xl bg-neutral-900/60 border border-neutral-800/80 p-6 space-y-4">
+            <div>
+              <h2 className="text-sm font-bold text-white uppercase tracking-wider">
+                Statistical Anomaly Alerts (FR24 & FR26)
+              </h2>
+              <p className="text-xs text-neutral-400 mt-0.5">
+                Bids flagged by statistical Z-Score underbid analysis or collusion frequency checks.
+              </p>
             </div>
-            <p className="text-[11px] text-neutral-500">
-              Volatility bound for reverse auction discounts.
-            </p>
-          </div>
 
-          <div className="p-5 rounded-2xl bg-neutral-900/60 border border-neutral-800 space-y-2">
-            <div className="text-[10px] font-bold uppercase text-neutral-400">Anomaly Threshold ($Z$)</div>
-            <div className="text-xl font-bold font-mono text-indigo-400">
-              {group.fraudThresholdZ} Standard Deviations
-            </div>
-            <p className="text-[11px] text-neutral-500">
-              Cutoff point: Bids below ₹{(group.historicalMeanBid - group.fraudThresholdZ * group.historicalSdBid).toLocaleString('en-IN')} are auto-flagged.
-            </p>
+            {alerts.length === 0 ? (
+              <div className="p-8 text-center rounded-xl bg-neutral-950/40 border border-neutral-800 text-xs text-neutral-400">
+                No active fraud alerts. All submitted bids currently comply with statistical bounds.
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {alerts.map((alert: any) => (
+                  <div
+                    key={alert.id}
+                    className="p-4 rounded-xl bg-neutral-950/80 border border-rose-500/30 flex flex-col md:flex-row items-start md:items-center justify-between gap-4"
+                  >
+                    <div className="space-y-1">
+                      <div className="flex items-center space-x-2">
+                        <span className="text-xs font-bold text-white">{alert.memberName}</span>
+                        <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-rose-500/20 text-rose-300 border border-rose-500/30">
+                          {alert.ruleViolated}
+                        </span>
+                        <span className="text-[10px] font-mono text-neutral-500">
+                          {new Date(alert.createdAt).toLocaleTimeString()}
+                        </span>
+                      </div>
+                      <p className="text-xs text-rose-200">{alert.details}</p>
+                    </div>
+
+                    {!alert.resolved && (
+                      <div className="flex items-center space-x-2">
+                        <button
+                          onClick={() => handleOverride(alert.id, 'OVERRIDDEN')}
+                          className="px-3 py-1.5 rounded-lg bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 text-xs font-semibold border border-emerald-500/30 transition-all flex items-center gap-1"
+                        >
+                          <CheckCircle2 className="w-3.5 h-3.5" /> Override & Allow
+                        </button>
+                        <button
+                          onClick={() => handleOverride(alert.id, 'DISQUALIFIED')}
+                          className="px-3 py-1.5 rounded-lg bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 text-xs font-semibold border border-rose-500/30 transition-all flex items-center gap-1"
+                        >
+                          <XCircle className="w-3.5 h-3.5" /> Disqualify Bid
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
-        </div>
+        )}
       </main>
     </div>
   );
