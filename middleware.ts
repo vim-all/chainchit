@@ -17,8 +17,11 @@ export function middleware(request: NextRequest) {
 
   const session = request.cookies.get('chainchit_session')?.value;
 
-  // Unauthenticated user -> redirect to /login
+  // Unauthenticated user -> 401 for API, redirect to /login for pages
   if (!session) {
+    if (pathname.startsWith('/api/')) {
+      return NextResponse.json({ error: 'Unauthorized. Authentication session required.' }, { status: 401 });
+    }
     const loginUrl = new URL('/login', request.url);
     return NextResponse.redirect(loginUrl);
   }
